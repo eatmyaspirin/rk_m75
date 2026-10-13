@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+build/
+dist/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local runtime
+*.log
+reports/
+
+# Large / generated research artifacts
+# (vendor PDF page renders and generated test images are reproducible)
+explore/manual_pages/
+explore/test_frame.png
+
+# Reverse-engineering scripts and vendor extracts are kept local only.
+explore/

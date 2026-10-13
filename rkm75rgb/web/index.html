@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>RK M75 · Audio Equalizer</title>
+<style>
+  :root{
+    --bg:#0b0d12; --panel:#141822; --panel2:#1b2130; --line:#252c3b;
+    --txt:#e7ecf5; --dim:#8b97ad; --accent:#39d3a6; --accent2:#6a8cff; --danger:#ff5c7a;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:radial-gradient(1200px 600px at 70% -10%,#1a2233 0%,var(--bg) 55%);
+       color:var(--txt);font:14px/1.45 "Segoe UI",system-ui,-apple-system,sans-serif;min-height:100vh}
+  header{display:flex;align-items:center;gap:14px;padding:18px 26px;border-bottom:1px solid var(--line);
+         backdrop-filter:blur(6px);position:sticky;top:0;background:rgba(11,13,18,.82);z-index:5}
+  h1{font-size:16px;margin:0;letter-spacing:.2px;font-weight:650}
+  h1 span{color:var(--dim);font-weight:400}
+  .pill{display:inline-flex;align-items:center;gap:7px;padding:5px 11px;border-radius:999px;
+        background:var(--panel);border:1px solid var(--line);font-size:12px;color:var(--dim)}
+  .dot{width:8px;height:8px;border-radius:50%;background:#54607a}
+  .dot.on{background:var(--accent);box-shadow:0 0 10px var(--accent)}
+  .dot.err{background:var(--danger);box-shadow:0 0 10px var(--danger)}
+  .spacer{flex:1}
+  main{display:grid;grid-template-columns:330px 1fr;gap:18px;padding:18px 26px 40px;max-width:1400px;margin:0 auto}
+  @media (max-width:1000px){main{grid-template-columns:1fr}}
+  .card{background:linear-gradient(180deg,var(--panel) 0%,var(--panel2) 100%);
+        border:1px solid var(--line);border-radius:14px;padding:16px}
+  .card h2{font-size:12px;text-transform:uppercase;letter-spacing:.12em;color:var(--dim);margin:0 0 12px}
+  .row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:10px 0}
+  .row label{color:var(--dim);font-size:13px}
+  .row output{font-variant-numeric:tabular-nums;color:var(--txt);font-size:12px;min-width:38px;text-align:right}
+  input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:4px;border-radius:4px;
+        background:linear-gradient(90deg,var(--accent2),var(--accent));outline:none;margin:0}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;height:15px;border-radius:50%;
+        background:#fff;border:3px solid var(--accent2);cursor:pointer}
+  select,input[type=text]{width:100%;background:#0f1320;color:var(--txt);border:1px solid var(--line);
+        border-radius:9px;padding:8px 10px;font:inherit;outline:none}
+  select:focus,input:focus{border-color:var(--accent2)}
+  .btn{border:1px solid var(--line);background:#0f1320;color:var(--txt);border-radius:9px;padding:10px 14px;
+       font:inherit;font-weight:600;cursor:pointer;transition:.15s}
+  .btn:hover{border-color:var(--accent2)}
+  .btn.primary{background:linear-gradient(90deg,var(--accent2),var(--accent));border:none;color:#08111a}
+  .btn.wide{width:100%}
+  .btns{display:flex;gap:8px;margin-top:4px}
+  .toggle{display:flex;align-items:center;gap:9px;color:var(--dim);font-size:13px;cursor:pointer;user-select:none}
+  .toggle input{width:16px;height:16px;accent-color:var(--accent2)}
+  canvas{width:100%;display:block;border-radius:10px;background:#0a0e17;border:1px solid var(--line)}
+  .kb{display:grid;grid-template-columns:repeat(16,1fr);gap:4px;margin-top:6px}
+  .key{aspect-ratio:1/1;border-radius:5px;background:#131826;border:1px solid #232b3d;
+       transition:background .05s linear, box-shadow .05s linear;position:relative}
+  .key.off{opacity:.22}
+  .key:hover::after{content:attr(data-k);position:absolute;left:50%;top:-26px;transform:translateX(-50%);
+       background:#000c;border:1px solid var(--line);padding:2px 7px;border-radius:6px;font-size:11px;white-space:nowrap;z-index:3}
+  .err{margin-top:12px;padding:10px 12px;border-radius:10px;border:1px solid #5c2233;background:#2a1220;
+       color:#ffc2ce;font-size:12.5px;display:none}
+  .legend{display:flex;gap:14px;color:var(--dim);font-size:12px;margin-top:10px;flex-wrap:wrap}
+  .swatch{width:26px;height:26px;border-radius:7px;border:1px solid var(--line);padding:0;background:none;cursor:pointer}
+</style>
+</head>
+<body>
+<header>
+  <h1>RK M75 <span>· audio equalizer</span></h1>
+  <div class="pill"><span class="dot" id="dot"></span><span id="status">idle</span></div>
+  <div class="pill" id="fpsPill">0.0 fps</div>
+  <div class="spacer"></div>
+  <button class="btn primary" id="toggle">Start</button>
+</header>
+
+<main>
+  <section class="card">
+    <h2>Controls</h2>
+
+    <div class="row"><label>Mode</label></div>
+    <select id="mode">
+      <option value="bars">Spectrum bars</option>
+      <option value="mirror">Mirror bars</option>
+      <option value="vu">VU meter</option>
+      <option value="pulse">Pulse</option>
+    </select>
+
+    <div class="row"><label>Palette</label></div>
+    <select id="palette">
+      <option value="rainbow">Rainbow</option>
+      <option value="fire">Fire</option>
+      <option value="ocean">Ocean</option>
+      <option value="ice">Ice</option>
+      <option value="neon">Neon</option>
+      <option value="mono">Mono (pick colour)</option>
+    </select>
+
+    <div class="row"><label>Mono colour</label><input class="swatch" type="color" id="mono" value="#00aaff"></div>
+
+    <div class="row"><label>Audio source</label></div>
+    <select id="device"></select>
+
+    <div class="row"><label>Bands</label><output id="bandsVal">16</output></div>
+    <input type="range" id="bands" min="4" max="21" step="1" value="16">
+
+    <div class="row"><label>Brightness</label><output id="brightnessVal">1.00</output></div>
+    <input type="range" id="brightness" min="0.1" max="1" step="0.01" value="1">
+
+    <div class="row"><label>Gain</label><output id="gainVal">1.60</output></div>
+    <input type="range" id="gain" min="0.2" max="6" step="0.1" value="1.6">
+
+    <div class="row"><label>Attack</label><output id="attackVal">0.55</output></div>
+    <input type="range" id="attack" min="0.05" max="1" step="0.05" value="0.55">
+
+    <div class="row"><label>Release</label><output id="releaseVal">0.18</output></div>
+    <input type="range" id="release" min="0.02" max="1" step="0.02" value="0.18">
+
+    <div class="row"><label>Update rate</label><output id="fpsVal">30</output></div>
+    <input type="range" id="fps" min="5" max="33" step="1" value="30">
+
+    <div class="row"><span class="toggle"><input type="checkbox" id="idle_glow" checked> Idle glow</span></div>
+    <div class="row"><span class="toggle"><input type="checkbox" id="extra_leds"> Drive aux LEDs</span></div>
+
+    <div class="btns">
+      <button class="btn wide" id="off">All off</button>
+    </div>
+    <div class="err" id="err"></div>
+  </section>
+
+  <section>
+    <div class="card">
+      <h2>Spectrum</h2>
+      <canvas id="spec" height="150"></canvas>
+      <div class="legend"><span id="srcLabel">—</span><span id="frameLabel">0 frames</span></div>
+    </div>
+    <div class="card" style="margin-top:18px">
+      <h2>Keyboard preview</h2>
+      <div class="kb" id="kb"></div>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const COLS = 16, ROWS = 6;
+const state = { settings:{}, labels:{} };
+let running = false;
+
+// ---- build keyboard preview (row 0 = top) -------------------------------
+const kb = $('kb');
+const cells = [];
+for (let row = 0; row < ROWS; row++) {
+  for (let col = 0; col < COLS; col++) {
+    const d = document.createElement('div');
+    d.className = 'key off';
+    d.dataset.led = col * ROWS + row;
+    kb.appendChild(d);
+    cells.push(d);
+  }
+}
+
+// ---- spectrum canvas ---------------------------------------------------
+const cv = $('spec'), ctx = cv.getContext('2d');
+function fitCanvas(){
+  const r = cv.getBoundingClientRect();
+  cv.width = Math.max(320, r.width | 0) * devicePixelRatio;
+  cv.height = 150 * devicePixelRatio;
+}
+addEventListener('resize', fitCanvas); fitCanvas();
+
+let levels = [];
+function drawSpectrum(){
+  const w = cv.width, h = cv.height;
+  ctx.clearRect(0,0,w,h);
+  // baseline grid
+  ctx.strokeStyle = '#1b2233'; ctx.lineWidth = 1;
+  for (let i=1;i<4;i++){ const y=h*i/4; ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke(); }
+  if (!levels.length) return;
+  const n = levels.length, bw = w/n;
+  for (let i=0;i<n;i++){
+    const v = Math.max(0, Math.min(1, levels[i]));
+    const x = i*bw, bh = v*(h-6);
+    const grad = ctx.createLinearGradient(0,h,0,0);
+    grad.addColorStop(0,'#39d3a6'); grad.addColorStop(.55,'#6a8cff'); grad.addColorStop(1,'#ff5c7a');
+    ctx.fillStyle = grad;
+    ctx.fillRect(x+1, h-bh, bw-2, bh);
+  }
+  // labels
+  ctx.fillStyle = '#54607a'; ctx.font = `${11*devicePixelRatio}px Segoe UI`;
+  ctx.fillText('low', 4, h-4); ctx.fillText('high', w-28*devicePixelRatio, h-4);
+}
+
+// ---- SSE ---------------------------------------------------------------
+function applyColors(colors){
+  if (!colors) return;
+  for (const d of cells){
+    const i = +d.dataset.led;
+    const c = colors[i];
+    if (!c) continue;
+    const on = (c[0]+c[1]+c[2]) > 6;
+    d.style.background = `rgb(${c[0]},${c[1]},${c[2]})`;
+    d.style.boxShadow = on ? `0 0 ${6}px rgba(${c[0]},${c[1]},${c[2]},.55)` : 'none';
+  }
+}
+
+const es = new EventSource('/api/events');
+es.onmessage = ev => {
+  const s = JSON.parse(ev.data);
+  levels = s.levels || [];
+  drawSpectrum();
+  applyColors(s.colors);
+  running = s.running;
+  const dot = $('dot'), st = $('status');
+  if (s.error){ dot.className='dot err'; st.textContent = 'error'; $('err').style.display='block'; $('err').textContent = s.error; }
+  else { dot.className = 'dot' + (running?' on':''); st.textContent = running ? 'streaming' : 'idle'; $('err').style.display='none'; }
+  $('toggle').textContent = running ? 'Stop' : 'Start';
+  $('fpsPill').textContent = (s.fps||0).toFixed(1) + ' fps';
+  $('frameLabel').textContent = (s.frames||0).toLocaleString() + ' frames';
+  $('srcLabel').textContent = s.device || '—';
+  if (s.labels){ state.labels = s.labels; cells.forEach(d => {
+      const name = s.labels[d.dataset.led]; if (name) d.dataset.k = name; }); }
+};
+
+// ---- controls ----------------------------------------------------------
+const sliderMap = {
+  bands:'bandsVal', brightness:'brightnessVal', gain:'gainVal',
+  attack:'attackVal', release:'releaseVal', fps:'fpsVal'
+};
+let pending = null, timer = null;
+function push(patch){
+  pending = Object.assign(pending || {}, patch);
+  clearTimeout(timer);
+  timer = setTimeout(async () => {
+    const body = pending; pending = null;
+    await fetch('/api/config', {method:'POST', headers:{'Content-Type':'application/json'},
+                                body: JSON.stringify(body)});
+  }, 60);
+}
+
+for (const [id, out] of Object.entries(sliderMap)){
+  const el = $(id);
+  const fmt = v => id==='bands' || id==='fps' ? v : (+v).toFixed(2);
+  const sync = () => { $(out).textContent = fmt(el.value); };
+  sync();
+  el.addEventListener('input', () => { sync(); push({[id]: parseFloat(el.value)}); });
+}
+$('mode').addEventListener('change', e => push({mode: e.target.value}));
+$('palette').addEventListener('change', e => push({palette: e.target.value}));
+$('mono').addEventListener('input', e => push({mono: e.target.value}));
+$('device').addEventListener('change', e => push({device: e.target.value}));
+$('idle_glow').addEventListener('change', e => push({idle_glow: e.target.checked}));
+$('extra_leds').addEventListener('change', e => push({extra_leds: e.target.checked}));
+
+$('toggle').addEventListener('click', async () => {
+  await fetch(running ? '/api/stop' : '/api/start', {method:'POST'});
+});
+$('off').addEventListener('click', async () => {
+  await fetch('/api/stop', {method:'POST'});
+});
+
+// ---- boot --------------------------------------------------------------
+(async () => {
+  const st = await (await fetch('/api/state')).json();
+  const s = st.settings || {};
+  for (const k of Object.keys(sliderMap)) if (s[k] != null) { $(k).value = s[k]; $(sliderMap[k]).textContent =
+      (k==='bands'||k==='fps') ? s[k] : (+s[k]).toFixed(2); }
+  if (s.mode) $('mode').value = s.mode;
+  if (s.palette) $('palette').value = s.palette;
+  if (s.mono) $('mono').value = s.mono;
+  $('idle_glow').checked = !!s.idle_glow;
+  $('extra_leds').checked = !!s.extra_leds;
+
+  const d = await (await fetch('/api/devices')).json();
+  const sel = $('device');
+  sel.innerHTML = '';
+  (d.devices||[]).forEach(x => {
+    const o = document.createElement('option');
+    o.value = x.id; o.textContent = x.label;
+    if (x.id === (s.device || d.default)) o.selected = true;
+    sel.appendChild(o);
+  });
+  if (!d.devices || !d.devices.length){
+    const o = document.createElement('option'); o.textContent = 'no audio devices found'; sel.appendChild(o);
+  }
+})();
+</script>
+</body>
+</html>
