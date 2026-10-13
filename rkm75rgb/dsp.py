@@ -15,6 +15,17 @@ class Analyzer:
     PEAK_FLOOR_ABS = 1e-6
     PEAK_FLOOR_REL = 1e-3
 
+    # Width of the display window below a band's own peak. The ear is roughly
+    # logarithmic, so the ratio is mapped over a dB range instead of being
+    # raised to a power: 0 dB (at the peak) is full height, -DB_RANGE dB is dark.
+    #
+    # Tuned by measurement, not by taste: because the auto-gain normalises every
+    # band towards its own peak, a wide window leaves everything lit (a 48 dB
+    # window put the spectral skirt of a pure tone at 0.66 and saturated
+    # broadband noise at ~1.0). 18 dB keeps only bands within 18 dB of their own
+    # recent peak visible, which is what makes the spectrum read as a spectrum.
+    DB_RANGE = 18.0
+
     def __init__(
         self,
         samplerate: int = 48000,
@@ -81,14 +92,16 @@ class Analyzer:
         self._peak = np.maximum(raw, np.maximum(self._peak * agc, floor))
         norm = raw / (self._peak + 1e-6)
 
-        # gentle perceptual curve
-        norm = np.clip(norm, 0.0, 1.0) ** 1.35
+        # perceptual mapping in dB rather than a fixed power curve, so the
+        # response is roughly even across the range the ear cares about
+        db = 20.0 * np.log10(np.maximum(norm, 1e-9))
+        shaped = np.clip((db + self.DB_RANGE) / self.DB_RANGE, 0.0, 1.0).astype(np.float32)
 
         # asymmetric smoothing: fast attack, slower release
         prev = self._levels
-        self._levels = np.where(norm > prev,
-                                prev + (norm - prev) * attack,
-                                prev + (norm - prev) * release)
+        self._levels = np.where(shaped > prev,
+                                prev + (shaped - prev) * attack,
+                                prev + (shaped - prev) * release)
         return self._levels.copy()
 
     @property
