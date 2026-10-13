@@ -26,6 +26,18 @@ class Analyzer:
     # recent peak visible, which is what makes the spectrum read as a spectrum.
     DB_RANGE = 18.0
 
+    # Per-band noise floor. A band carrying nothing still has a little energy --
+    # spectral leakage from the rest of the signal, hiss, hum -- and the
+    # auto-gain will happily normalise that up towards full height. Track the
+    # quietest level each band reaches and subtract it.
+    #
+    # The floor is only learned in bands that are quiet relative to the loudest
+    # band. Without that guard a band holding a sustained note would have its own
+    # level learned as "noise" and be subtracted away, which is exactly the music
+    # you want to see.
+    FLOOR_LEARN_ABOVE = 0.03    # only learn in bands >= 30 dB below the loudest
+    FLOOR_STEP = 2e-5           # rise per block; falling is instant
+
     def __init__(
         self,
         samplerate: int = 48000,
@@ -58,6 +70,7 @@ class Analyzer:
         # (which sets the floor the per-band peaks are allowed to decay to)
         self._peak = np.full(self.bands, self.PEAK_FLOOR_ABS, dtype=np.float32)
         self._global = float(self.PEAK_FLOOR_ABS)
+        self._floor = np.zeros(self.bands, dtype=np.float32)
         self._levels = np.zeros(self.bands, dtype=np.float32)
 
     def set_bands(self, bands: int) -> None:
@@ -74,7 +87,8 @@ class Analyzer:
             x = np.resize(x, self.blocksize)
 
         rms = float(np.sqrt(np.mean(x * x)))
-        if rms < self.gate:
+        silent = rms < self.gate
+        if silent:
             x = np.zeros_like(x)
 
         spec = np.abs(np.fft.rfft(x * self._window))
@@ -83,14 +97,25 @@ class Analyzer:
         raw = np.array([spec[m].mean() for m in self._masks], dtype=np.float32)
         raw *= gain
 
-        # auto-gain: track a decaying peak per band so quiet sources still light
-        # up, but never let a peak decay below the relative floor
+        # track the loudest band, which both floors the auto-gain and sets the
+        # threshold below which a band counts as "quiet" for noise-floor learning
         loudest = float(raw.max()) if raw.size else 0.0
         self._global = max(loudest, self._global * agc, self.PEAK_FLOOR_ABS)
-        floor = max(self.PEAK_FLOOR_ABS, self._global * self.PEAK_FLOOR_REL)
 
-        self._peak = np.maximum(raw, np.maximum(self._peak * agc, floor))
-        norm = raw / (self._peak + 1e-6)
+        # subtract the per-band noise floor: instant fall, slow rise, and only
+        # learned in bands that are quiet relative to the loudest. While the gate
+        # says we are in silence the floor is left alone rather than reset to 0.
+        if not silent:
+            quiet = raw <= self._global * self.FLOOR_LEARN_ABOVE
+            self._floor = np.where(
+                quiet, np.minimum(raw, self._floor + self.FLOOR_STEP), self._floor)
+        sig = np.maximum(raw - self._floor, 0.0)
+
+        # auto-gain: track a decaying peak per band so quiet sources still light
+        # up, but never let a peak decay below the relative floor
+        floor = max(self.PEAK_FLOOR_ABS, self._global * self.PEAK_FLOOR_REL)
+        self._peak = np.maximum(sig, np.maximum(self._peak * agc, floor))
+        norm = sig / (self._peak + 1e-6)
 
         # perceptual mapping in dB rather than a fixed power curve, so the
         # response is roughly even across the range the ear cares about
