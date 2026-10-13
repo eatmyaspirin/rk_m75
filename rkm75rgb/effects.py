@@ -42,15 +42,32 @@ def palette_color(name: str, t: float, mono: Color = (0, 170, 255)) -> Color:
 
 
 def to_columns(levels: np.ndarray, ncols: int = KEY_COLUMNS) -> np.ndarray:
-    """Resample the band levels onto the physical columns."""
+    """Resample band levels onto the physical columns.
+
+    Fewer bands than columns: interpolate, so each band stretches across several
+    keys. More bands than columns: average the bands falling inside each column
+    -- interpolating here would step straight past a narrow peak that happens to
+    land between two columns.
+    """
     levels = np.asarray(levels, dtype=np.float32).ravel()
     if levels.size == 0:
         return np.zeros(ncols, dtype=np.float32)
     if levels.size == 1:
         return np.full(ncols, float(levels[0]), dtype=np.float32)
-    src = np.linspace(0.0, 1.0, levels.size)
-    dst = np.linspace(0.0, 1.0, ncols)
-    return np.interp(dst, src, levels).astype(np.float32)
+    if levels.size == ncols:
+        return levels.copy()
+
+    if levels.size < ncols:
+        src = np.linspace(0.0, 1.0, levels.size)
+        dst = np.linspace(0.0, 1.0, ncols)
+        return np.interp(dst, src, levels).astype(np.float32)
+
+    # more bands than columns: split the bands as evenly as possible, then
+    # average each group (levels.size > ncols guarantees every group is non-empty)
+    q, r = divmod(levels.size, ncols)
+    bounds = np.cumsum([0] + [q + (1 if i < r else 0) for i in range(ncols)])
+    return np.array([levels[bounds[i]:bounds[i + 1]].mean() for i in range(ncols)],
+                    dtype=np.float32)
 
 
 def _scale(c: Color, f: float) -> Color:
