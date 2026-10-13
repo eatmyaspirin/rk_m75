@@ -7,6 +7,8 @@ result to the keyboard's per-key RGB at ~30 fps.
 Everything runs locally. No official RK software, no drivers, no cloud.
 
 Explore the reverse-engineered internals: [docs/technical-notes.md](docs/technical-notes.md).
+The maths behind the equalizer, from first principles:
+[docs/dsp-explained.md](docs/dsp-explained.md).
 
 ## Install
 
