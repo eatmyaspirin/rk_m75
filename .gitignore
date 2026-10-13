@@ -25,3 +25,6 @@ explore/test_frame.png
 
 # Reverse-engineering scripts and vendor extracts are kept local only.
 explore/
+
+# Automatic profile backups written by rkm75rgb.profile
+rk75-profile-slot*.bak

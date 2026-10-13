@@ -1,11 +1,12 @@
 """HID transport for the RK M75 vendor interface (feature report 9)."""
 from __future__ import annotations
 
+import time
 from typing import Optional
 
 import hid
 
-from .protocol import INTERFACE, PRODUCT_ID, REPORT_SIZE, USAGE, USAGE_PAGE, VENDOR_ID
+from .protocol import INTERFACE, PRODUCT_ID, REPORT_ID, REPORT_SIZE, USAGE, USAGE_PAGE, VENDOR_ID
 
 
 def discover() -> dict:
@@ -32,6 +33,9 @@ class Transport:
         self.path = path or discover()["path"]
         self._dev = hid.device()
         self._dev.open_path(self.path)
+        # Reads (get_feature_report) only work non-blocking on Windows; streaming
+        # writes are unaffected.
+        self._dev.set_nonblocking(1)
         self._closed = False
         self.frames_sent = 0
 
@@ -43,6 +47,23 @@ class Transport:
         n = self._dev.send_feature_report(report)
         self.frames_sent += 1
         return n
+
+    def read_report(self, length: int = REPORT_SIZE, retries: int = 4) -> bytes:
+        """Read a feature-report response.
+
+        `length` must include the report ID byte: asking for 519 fails while 520
+        succeeds, so the default is the full report.
+        """
+        if self._closed:
+            raise RuntimeError("transport is closed")
+        last: Exception | None = None
+        for _ in range(max(1, retries)):
+            try:
+                return bytes(self._dev.get_feature_report(REPORT_ID, length))
+            except Exception as exc:  # device not ready yet / no reply pending
+                last = exc
+                time.sleep(0.05)
+        raise IOError(f"no feature report from the keyboard: {last}")
 
     def close(self) -> None:
         if self._closed:
