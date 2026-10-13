@@ -275,6 +275,7 @@ plus `I1` lands on payload byte 8.
 | --- | --- | --- |
 | `0x04` (4) | `setProfile` | payload at offset 7, 128 bytes, `cmdVal = profile & 3` |
 | `0x05` (5) | — | used by some packet classes |
+| `0x06` (6) | `setLedColors` | 378-byte per-key colour **profile**, `cmdVal = slot & 3` |
 | `0x07` (7) | — | |
 | `0x08` (8) | **RGB frame** | 378-byte framebuffer at offset 8 |
 | `0x0B` (11) | status | observed in captures |
@@ -284,6 +285,7 @@ plus `I1` lands on payload byte 8.
 | `0x44` (68) | paged data | |
 | `0x82` (130) | `getPassword` / firmware version | read-only |
 | `0x84` (132) | `getProfile` | read-only |
+| `0x86` (134) | `getLedColors` | read-only, same 378-byte layout as `0x06` |
 
 ### 4.3 Reads vs writes
 
@@ -531,6 +533,98 @@ Three independent confirmations:
 3. **Hardware** — sending `cmd 13` start → 512-byte `cmd 12` chunks → `cmd 13`
    commit at both 240×135 and 128×128 produced no visible change and no
    acknowledgement.
+4. **No data path exists.** An audit of every collection on the device
+   (`HidP_GetCaps`) shows the widest **output** report is **2 bytes** — the
+   keyboard's LED-indicator report on `MI_00`. Every vendor collection has an
+   output length of `0`:
+
+   ```
+   interface  collection   usage        IN    OUT   FEAT
+   MI_00      (root)       0001:0006     9      2      0
+   MI_01      Col03        FF02:0001     4      0      0
+   MI_01      Col05        FF02:0001     0      0    520
+   MI_01      Col07        FF00:0001     0      0      6
+   MI_01      Col08        FF00:0001     0      0   1032
+   ```
+
+   The only wide channel is **feature reports**, which travel on the control
+   endpoint (synchronous, ~ms each) — far too slow to carry pixels. There is
+   simply no pipe on this device that could transport a framebuffer.
+   (`explore/output_report_audit.py`)
+
+Point 4 is the strongest of the four: it is structural, not behavioural. Even if
+the firmware did understand `cmd 12`, there is no way to feed it an image at any
+reasonable rate.
+
+### 6.5 How a keyboard screen that *does* work is built
+
+Worth comparing against a solved case. The **Aula F75 Max** (`0c45:800a`,
+SONiX) has a 128×128 RGB565 screen driven from the host, documented in
+[`rexdotsh/aula-f75-max-screen`](https://github.com/rexdotsh/aula-f75-max-screen).
+Its layout:
+
+| Interface | Usage | Input | Output | Feature | Role |
+| --- | --- | --- | --- | --- | --- |
+| `MI_00` | `0001/06` | 9 | 2 | — | boot keyboard |
+| `MI_01` | several | — | — | — | media / system / NKRO / mouse / vendor |
+| `MI_02` | `ff68/61` | 65 | **4097** | — | **display**: pixels out, acks in |
+| `MI_03` | `ff13/01` | 65 | 65 | 65 | command channel |
+
+The decisive difference: a working screen has a **dedicated interface with
+4097-byte output reports**. A frame is 9 chunks, each chunk acknowledged, ~145 ms
+per chunk. Images are stored in flash, so they survive unplugging and show in
+wireless mode.
+
+Commands are 64-byte feature reports `04 <op>` on the command interface, with a
+reply read back via `GET_REPORT`: `18` begin, `72` upload header, data chunks,
+`02` commit, `f0` save.
+
+Five takeaways that generalise:
+
+1. **A screen needs a bulk pipe.** If a keyboard's widest report is small, it has
+   no host-reachable framebuffer — full stop.
+2. **Vendor installers advertise their own screens.** Aula's ships
+   `layouts/rgb-keyboard.xml` containing
+   `<screen gif_headlength="256" gif_maxframes="255" width="128" height="128"/>`.
+   RK's equivalent is `Dev\<PID>\KB.ini` (`ShowScreen`, `siScreen`,
+   `DataUnitSize`, `MaxScreenFrame`). Grepping an unpacked installer for
+   `screen` answers the question before you touch the hardware.
+3. **A "user-defined" lighting mode plus a stored per-key colour profile is
+   how these boards persist custom lighting.** Aula: op `13` mode `0x80` then op
+   `23`. RK's M75 has the same shape — `cmd 6` (`setLedColors`, 378 bytes = 126
+   LEDs × RGB, 4 slots) and the `LedMode`/`LedModeSelection` profile fields.
+   This is a real improvement for the M75 app: it can *store* colours instead of
+   streaming them (see below).
+4. **Same method works.** They unpacked an Inno Setup installer with
+   `innoextract` (never ran it), decompiled `DeviceDriver.exe`, and read the
+   vendor's XML — exactly the approach used here, minus Ghidra.
+5. **Neither vendor exposes more than its app uses.** Aula's notes end with the
+   same open question ours do: the vendor driver has no page-switch or
+   progress-screen suppression, and the only way to know if the firmware has
+   more is to probe unlisted ops.
+
+### 6.6 Persistent custom lighting (a real M75 capability)
+
+The audit in §6.2 turned up something useful: `cmd 6` writes a 378-byte
+per-key colour **profile**, and `cmd 134` reads it back.
+
+```python
+def set_led_colors(slot, rgb_bytes):      # rgb_bytes = 126 * 3, same order as the stream
+    p = bytearray(519)
+    p[0] = 6                     # cmd
+    p[2] = slot & 3              # cmdVal: 4 slots
+    p[3] = 1
+    p[5] = 378 & 0xFF            # dataLength, little-endian
+    p[6] = 378 >> 8
+    p[7:7 + 378] = rgb_bytes
+    dev.send_feature_report(bytes([9]) + bytes(p))
+```
+
+Because this lands in the stored profile, combining it with the
+`LedModeSelection` / `LedMode` field set to the "self-defined" effect should make
+custom colours survive without the ~1 s keepalive. We have not yet confirmed
+which `LedMode` value selects it on this firmware, or whether the write reaches
+flash without a separate save — both are testable.
 
 ### 6.3 Why "no ACK" was a trap
 

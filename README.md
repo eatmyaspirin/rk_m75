@@ -120,5 +120,12 @@ brightness). It has no host-reachable drawing path: the official WebHID driver
 has no screen commands for this PID, the official desktop driver's
 `Dev\0163\KB.ini` lacks the `ShowScreen`/`siScreen`/`MaxScreenFrame` keys that
 screen models (e.g. RK S85, PID 0193) have, and the firmware ignores the
-screen command set entirely. Putting arbitrary content on it would require a
-hardware mod (driving the panel directly) or custom firmware.
+screen command set entirely.
+
+Structurally it could not work either: the widest **output** report on the whole
+device is **2 bytes**, so there is no pipe that could carry a framebuffer at any
+speed. By contrast a keyboard whose screen *is* host-drivable — the Aula F75 Max —
+exposes a dedicated interface with **4097-byte output reports**. Putting
+arbitrary content on the M75's panel would require a hardware mod (driving the
+panel directly) or custom firmware. See
+[docs/technical-notes.md §6](docs/technical-notes.md#6-the-screen-protocol-and-why-it-doesnt-work).
