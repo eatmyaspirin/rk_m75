@@ -89,16 +89,34 @@ rkm75rgb/
   frame.py      126-LED framebuffer
   layout.py     key -> LED map and physical grid
   audio.py      WASAPI loopback capture
-  dsp.py        FFT, log-spaced bands, auto-gain, smoothing
+  dsp.py        FFT, log-spaced bands, noise floor, auto-gain, smoothing
   effects.py    palettes + render modes
   engine.py     capture -> render -> send worker thread
   server.py     local HTTP + SSE server
+  profile.py    read / back up / edit the keyboard's stored configuration
   web/          the UI
 ```
 
 The reverse-engineering scripts used to build this are kept locally in
 `explore/` — they are intentionally not published (they contain extracts of
 RK's minified driver).
+
+## Stored configuration
+
+The keyboard keeps its own 128-byte configuration profile (effect, brightness,
+speed, report rate, debounce, sleep time, time format). You can read, change,
+back up and restore it:
+
+```powershell
+python -m rkm75rgb.profile                        # show the current profile
+python -m rkm75rgb.profile --backup slot0.bin
+python -m rkm75rgb.profile --set SleepTime=10 --set Debounce=3
+python -m rkm75rgb.profile --effect SelfDefine    # or OFF, Rainbow, ...
+python -m rkm75rgb.profile --restore slot0.bin
+```
+
+Anything that changes the profile is preceded by an automatic backup
+(`rk75-profile-slot0.bak`) unless you pass `--no-backup`.
 
 ## Notes & limitations
 

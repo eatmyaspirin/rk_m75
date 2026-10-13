@@ -763,32 +763,73 @@ system output ──WASAPI loopback──▶ mono float32 blocks (1024 @ 48 kHz)
 Threading: one worker thread does capture → analyse → render → send. The HTTP
 server only reads state; nothing blocks the audio path.
 
-### 9.2 Auto-gain (the thing that makes it feel good)
+### 9.2 Auto-gain
 
 Without AGC, quiet tracks barely move and loud tracks clip. Each band tracks a
-decaying peak:
+decaying peak, so the display is self-calibrating and works from a whisper to a
+club PA:
 
 ```python
-self._peak = np.maximum(raw, self._peak * 0.94)     # decay ~6% per block
+loudest = raw.max()
+self._global = max(loudest, self._global * agc, PEAK_FLOOR_ABS)   # agc = 0.94
+floor = max(PEAK_FLOOR_ABS, self._global * PEAK_FLOOR_REL)        # PEAK_FLOOR_REL = 1e-3
+self._peak = np.maximum(raw, np.maximum(self._peak * agc, floor))
 norm = raw / (self._peak + 1e-6)
 ```
 
-Then a perceptual curve (`**1.35`) and asymmetric smoothing — fast attack so
-transients punch, slow release so it decays gracefully:
+Two details that matter, both found by measurement:
+
+* **The floor is relative, not absolute.** With no floor at all the per-band peak
+  decays towards that band's own leakage and `raw / peak` climbs to ~1 for bands
+  carrying nothing — a held 1 kHz tone pushed the seven empty low bands to
+  0.89–0.94. An absolute floor would break quiet sources; a floor set 60 dB
+  below the *loudest band* does not.
+* **`agc = 0.94` per block** is a half-life of ~11 blocks ≈ 0.24 s at 46.9
+  blocks/s.
+
+### 9.3 Noise floor, dB mapping and smoothing
 
 ```python
-self._levels = np.where(norm > prev,
-                        prev + (norm - prev) * attack,     # 0.55
-                        prev + (norm - prev) * release)    # 0.18
+# learn a per-band noise floor, but only in bands that are quiet relative to the
+# loudest, so a sustained note is never learned as "noise" and subtracted
+quiet = raw <= self._global * FLOOR_LEARN_ABOVE          # 0.03 = -30 dB
+self._floor = np.where(quiet, np.minimum(raw, self._floor + FLOOR_STEP), self._floor)
+sig = np.maximum(raw - self._floor, 0.0)
+
+db = 20 * log10(max(sig / peak, 1e-9))                   # perceptual mapping
+shaped = clip((db + DB_RANGE) / DB_RANGE, 0, 1)          # DB_RANGE = 18 dB
+
+self._levels = np.where(shaped > prev,
+                        prev + (shaped - prev) * attack,   # 0.55
+                        prev + (shaped - prev) * release)  # 0.18
 ```
 
-### 9.3 Band → column mapping
+Measured behaviour of that chain:
+
+| Input | Result |
+| --- | --- |
+| held 1 kHz tone | only the real band lit; the skirt reads 0.00 |
+| real tone 20–30 dB below a loud tone | survives at full height |
+| broadband noise | 0.89–1.00 (correct: every band has real content) |
+| silence | decays to 0 in ~0.5 s |
+
+The `DB_RANGE` window and `FLOOR_LEARN_ABOVE` are the two knobs that decide what
+counts as "quiet enough to ignore". 18 dB and −30 dB are what the measurements
+above were taken with.
+
+### 9.4 Band → column mapping
+
+Fewer bands than columns interpolates (each band stretches across several keys);
+more bands than columns **averages** the bands inside each column:
 
 ```python
-src = np.linspace(0, 1, len(levels))       # e.g. 16 bands
-dst = np.linspace(0, 1, 16)                # physical columns
-cols = np.interp(dst, src, levels)
+q, r = divmod(levels.size, ncols)
+bounds = np.cumsum([0] + [q + (1 if i < r else 0) for i in range(ncols)])
+cols = np.array([levels[bounds[i]:bounds[i + 1]].mean() for i in range(ncols)])
 ```
+
+Interpolating in the down-sampling direction steps past narrow peaks: a single
+loud band in a 21-band spectrum came out at 0.33 instead of 1.0.
 
 Modes then differ only in how a column's level becomes rows:
 
@@ -797,7 +838,7 @@ Modes then differ only in how a column's level becomes rows:
 * `vu` — one colour, fill proportional to overall level
 * `pulse` — whole board brightness follows peak level
 
-### 9.4 Audio capture on Windows
+### 9.5 Audio capture on Windows
 
 ```python
 import soundcard as sc
@@ -811,7 +852,7 @@ Loopback records a chosen **output**. If the app looks dead, the music is
 almost always playing through a different output device than the one being
 captured — that is the single most common failure.
 
-### 9.5 Server shape
+### 9.6 Server shape
 
 Stdlib only (`ThreadingHTTPServer`), which avoids a dependency on FastAPI:
 
