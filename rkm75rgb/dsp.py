@@ -7,6 +7,14 @@ import numpy as np
 class Analyzer:
     """Turns audio blocks into normalised band levels suitable for lighting."""
 
+    # A band whose peak decays towards zero eventually matches that band's own
+    # spectral leakage, and `raw / peak` then climbs towards 1 even though the
+    # band carries nothing. Flooring the peak stops that. The floor is relative
+    # to the loudest band (not absolute) so that quiet sources still work: a
+    # band 60 dB below the loudest is treated as empty.
+    PEAK_FLOOR_ABS = 1e-6
+    PEAK_FLOOR_REL = 1e-3
+
     def __init__(
         self,
         samplerate: int = 48000,
@@ -35,8 +43,10 @@ class Analyzer:
                 m[np.argmin(np.abs(freqs - edges[i]))] = True
             self._masks.append(m)
 
-        # per-band running peak for auto-gain
-        self._peak = np.full(self.bands, 1e-4, dtype=np.float32)
+        # per-band running peak for auto-gain, plus the loudest band overall
+        # (which sets the floor the per-band peaks are allowed to decay to)
+        self._peak = np.full(self.bands, self.PEAK_FLOOR_ABS, dtype=np.float32)
+        self._global = float(self.PEAK_FLOOR_ABS)
         self._levels = np.zeros(self.bands, dtype=np.float32)
 
     def set_bands(self, bands: int) -> None:
@@ -62,8 +72,13 @@ class Analyzer:
         raw = np.array([spec[m].mean() for m in self._masks], dtype=np.float32)
         raw *= gain
 
-        # auto-gain: track a decaying per-band peak so quiet sources still light up
-        self._peak = np.maximum(raw, self._peak * agc)
+        # auto-gain: track a decaying peak per band so quiet sources still light
+        # up, but never let a peak decay below the relative floor
+        loudest = float(raw.max()) if raw.size else 0.0
+        self._global = max(loudest, self._global * agc, self.PEAK_FLOOR_ABS)
+        floor = max(self.PEAK_FLOOR_ABS, self._global * self.PEAK_FLOOR_REL)
+
+        self._peak = np.maximum(raw, np.maximum(self._peak * agc, floor))
         norm = raw / (self._peak + 1e-6)
 
         # gentle perceptual curve
